@@ -1,0 +1,91 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Одноузловый Kafka в режиме KRaft (без ZooKeeper).
+  # Listener'ы:
+  #   PLAINTEXT_HOST (localhost:9092) - для продюсера, запущенного на хосте;
+  #   PLAINTEXT      (kafka:19092)    - для ClickHouse внутри docker-сети;
+  #   CONTROLLER     (kafka:9093)     - внутриузловой контроллер KRaft.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: hw2-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      # CONTROLLER обязан быть и в advertised.listeners: в KRaft combined mode
+      # Kafka 3.9 иначе подставляет хост 0.0.0.0 из listeners и падает с
+      # "advertised.listeners cannot use the nonroutable meta-address 0.0.0.0".
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+
+  # Создаёт топик с нужным числом партиций (6 - под число consumers в ClickHouse)
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: hw2-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+          --create --if-not-exists \
+          --topic transactions \
+          --partitions 6 \
+          --replication-factor 1
+        echo "Kafka topic 'transactions' is ready:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --describe --topic transactions
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # ClickHouse: схема из sql/02_ddl_optimized.sql поднимается автоматически
+  # при первом старте (пустой volume). Каталог sql/ смонтирован в /sql -
+  # он используется для ручных запросов из README.
+  # ---------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: hw2-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - ch-data:/var/lib/clickhouse
+      - ./sql:/sql:ro
+      - ./results:/results
+      - ./sql/02_ddl_optimized.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+volumes:
+  kafka-data:
+  ch-data:

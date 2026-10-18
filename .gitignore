@@ -1,0 +1,17 @@
+# Датасет с Kaggle (не входит в репозиторий, кладётся вручную)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Логи и временные файлы
+*.log
