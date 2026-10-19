@@ -1,7 +1,4 @@
-﻿-- =============================================================================
--- Воспроизведение бенчмарка оптимизации (п.4 задания).
---
--- 1) Создаёт таблицу-базлайн с DDL из sql/01_ddl.sql (без LowCardinality,
+﻿-- 1) Создаёт таблицу с DDL из sql/01_ddl.sql (без LowCardinality,
 --    PARTITION BY, ORDER BY, проекции) и копирует в неё те же данные.
 -- 2) Сравнивает размеры хранения и сжатие (system.parts).
 -- 3) Гоняет запрос п.3 попеременно 5 раз на каждой из таблиц и выводит
@@ -14,7 +11,6 @@
 --   docker compose exec -T clickhouse clickhouse-client --queries-file /sql/04_benchmark.sql
 -- =============================================================================
 
--- 1. Базовая таблица (DDL из sql/01_ddl.sql) -------------------------------
 DROP TABLE IF EXISTS hw2.transactions_basic;
 
 CREATE TABLE IF NOT EXISTS hw2.transactions_basic
@@ -44,12 +40,9 @@ ORDER BY tuple();
 INSERT INTO hw2.transactions_basic
 SELECT * FROM hw2.transactions;
 
--- Приводим обе таблицы к состоянию после фоновых мержей: иначе замер
--- попадут I/O фоновых merge и число частей будет разным на каждой машине.
 OPTIMIZE TABLE hw2.transactions FINAL;
 OPTIMIZE TABLE hw2.transactions_basic FINAL;
 
--- 2. Размеры и сжатие --------------------------------------------------------
 SELECT
     table,
     sum(rows)                                        AS rows,
@@ -64,7 +57,6 @@ GROUP BY table
 ORDER BY table
 FORMAT Vertical;
 
--- Какой ключ хранения использует каждая таблица
 SELECT
     table,
     partition_key,
@@ -74,9 +66,6 @@ WHERE database = 'hw2' AND table IN ('transactions', 'transactions_basic')
 ORDER BY table
 FORMAT Vertical;
 
--- 3. Время запроса п.3: 5 чередующихся прогонов на каждую таблицу ----------
---    (обёртка в подзапрос нужна, чтобы добавить тег для system.query_log;
---     сам запрос п.3 внутри не меняется)
 SELECT 'bench_basic' AS tag, count() AS states FROM (
     SELECT us_state, argMax(cat_id, (amount, transaction_time)) AS c,
            max(amount) AS m, argMax(transaction_time, (amount, transaction_time)) AS tt
@@ -130,7 +119,6 @@ SELECT 'bench_optimized' AS tag, count() AS states FROM (
 
 SYSTEM FLUSH LOGS;
 
--- Итоговая сводка бенчмарка
 SELECT
     if(position(query, 'bench_basic') > 0,
        '1) basic (sql/01_ddl.sql): ORDER BY tuple, без LowCardinality и проекции',
@@ -144,8 +132,8 @@ SELECT
 FROM system.query_log
 WHERE type = 'QueryFinish'
   AND (position(query, 'bench_basic') > 0 OR position(query, 'bench_optimized') > 0)
-  AND position(query, 'Итоговая сводка') = 0     -- исключаем сам этот отчёт при повторных запусках
-  AND event_time > now() - 120                  -- только текущий запуск (перезапускайте раз в 2-3 мин)
+  AND position(query, 'Итоговая сводка') = 0     
+  AND event_time > now() - 120
 GROUP BY version
 ORDER BY version
 FORMAT Vertical;

@@ -1,15 +1,10 @@
--- =============================================================================
--- П.4 задания: оптимизированный DDL (исходный вариант - sql/01_ddl.sql).
---
--- Что изменено и почему:
---
 -- 1) ORDER BY (us_state, amount) вместо tuple().
---    Первичный ключ совпадает с полями GROUP BY / ORDER BY запроса п.3:
+--    Первичный ключ совпадает с полями GROUP BY/ORDER BY запроса п.3:
 --    строки одного штата лежат рядом (локальность чтения), при фильтрации
 --    по us_state и amount работает первичный индекс (пропуск гранул),
 --    а при включённом optimize_aggregation_in_order агрегация идёт по
 --    уже отсортированному потоку - без построения хеш-таблицы GROUP BY.
---
+
 -- 2) PARTITION BY toYYYYMM(transaction_time).
 --    Данные разбиты по месяцам (15 партиций 2019-01..2020-03): запросы с
 --    фильтром по дате не сканируют лишние месяцы, мерж-фонды меньше,
@@ -18,28 +13,21 @@
 --
 -- 3) LowCardinality(String) для 10 колонок с < 1000 уникальных значений
 --    (cat_id - 14, gender - 2, us_state - 51, merch - 693 и т.д.).
---    Значения кодируются индексом словаря (1-2 байта вместо строки):
---    меньше диск/память, быстрее сканирование, сортировка и GROUP BY.
---
--- 4) CODEC(ZSTD) / CODEC(DoubleDelta, ZSTD).
---    DateTime хранится дельтами + zstd, строки - zstd (степень 3):
---    таблица занимает заметно меньше места, I/O при сканировании ниже.
---
--- 5) На стороне Kafka: kafka_num_consumers = 6 (по числу партиций топика)
+
+-- 4) CODEC(ZSTD)/CODEC(DoubleDelta, ZSTD).
+--    DateTime хранится дельтами + zstd, строки - zstd 
+
+-- 5) kafka_num_consumers = 6 (по числу партиций топика)
 --    и kafka_max_block_size = 262144 - данные пишутся более крупными блоками,
---    в таблице появляется меньше мелких частей (parts).
+--    в таблице появляется меньше мелких частей
 --
--- 6) PROJECTION p_state_max - главный ускоритель запроса п.3: готовый
+-- 6) PROJECTION p_state_max - готовый
 --    агрегат (argMax по (amount, transaction_time) + max(amount) в разрезе
 --    us_state), который обновляется автоматически при каждой вставке из
---    Kafka. Запрос п.3 читает проекцию вместо всей таблицы: ~800 строк
---    вместо 786431 (в ~900 раз меньше I/O). Цена: несколько МБ доп. места
---    и небольшие затраты CPU при вставке на пересчёт проекции.
--- =============================================================================
+--    кафки.
 
 CREATE DATABASE IF NOT EXISTS hw2;
 
--- Итоговая таблица ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS hw2.transactions
 (
     transaction_time DateTime                  CODEC(DoubleDelta, ZSTD),
@@ -76,8 +64,6 @@ ORDER BY (us_state, amount)
 SETTINGS
     index_granularity = 8192;
 
--- Ворота из Kafka -----------------------------------------------------------
--- 6 consumers = 6 партиций топика (см. kafka-init в docker-compose.yml).
 CREATE TABLE IF NOT EXISTS hw2.kafka_transactions
 (
     transaction_time DateTime,
@@ -109,7 +95,6 @@ SETTINGS
     kafka_max_block_size       = 262144,
     kafka_skip_broken_messages = 100;
 
--- MV: Kafka -> итоговая таблица --------------------------------------------
 CREATE MATERIALIZED VIEW IF NOT EXISTS hw2.mv_transactions
 TO hw2.transactions
 AS

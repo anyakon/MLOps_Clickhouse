@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""Загрузка CSV-файла датасета транзакций в топик Kafka.
-
-Каждая строка CSV становится одним JSON-сообщением (формат JSONEachRow),
-чтобы табличный движок Kafka в ClickHouse мог читать топик напрямую.
-
-Примеры запуска:
-    python scripts/csv_to_kafka.py --csv "data/train.csv"
-    python scripts/csv_to_kafka.py --csv "data/train (1).csv" --topic transactions --limit 1000
-"""
-
 import argparse
 import json
 import os
